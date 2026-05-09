@@ -1,0 +1,9 @@
+{
+  "timestamp_utc": "2026-05-07T18:31:24.763455+00:00",
+  "severity": "low",
+  "affected_roads": 336,
+  "total_affected_length_m": 30046.158333870728,
+  "route_length_m": 771.2179827784385,
+  "route_path": "C:\\Users\\minin\\Documents\\GitHub\\geo-rescue-omni-GIS-agent\\georescue-amd-hackathon\\data\\processed\\optimal_route_colombo.geojson",
+  "latest_route_path": "C:\\Users\\minin\\Documents\\GitHub\\geo-rescue-omni-GIS-agent\\georescue-amd-hackathon\\data\\processed\\latest_route.geojson"
+}

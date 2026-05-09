@@ -1,0 +1,13 @@
+{
+"type": "FeatureCollection",
+"name": "latest_route",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "segment": 0, "node_from": 644607639, "node_to": 683787619, "length_m": 65.039874300076633, "street_name": "Sri Vajirawansa Road" }, "geometry": { "type": "LineString", "coordinates": [ [ 79.8901721, 6.9156909 ], [ 79.8901109, 6.9157091 ], [ 79.8899897, 6.9157719 ], [ 79.889793, 6.915813 ], [ 79.8896676, 6.9157938 ], [ 79.8896077, 6.915784 ] ] } },
+{ "type": "Feature", "properties": { "segment": 1, "node_from": 683787619, "node_to": 1428445677, "length_m": 68.42656161892269, "street_name": "Sri Vajirawansa Road" }, "geometry": { "type": "LineString", "coordinates": [ [ 79.8896077, 6.915784 ], [ 79.8893467, 6.9155461 ], [ 79.889169, 6.9153502 ] ] } },
+{ "type": "Feature", "properties": { "segment": 2, "node_from": 1428445677, "node_to": 683787620, "length_m": 147.62557489197411, "street_name": "Unknown" }, "geometry": { "type": "LineString", "coordinates": [ [ 79.889169, 6.9153502 ], [ 79.8892589, 6.9151824 ], [ 79.8895083, 6.9140721 ] ] } },
+{ "type": "Feature", "properties": { "segment": 3, "node_from": 683787620, "node_to": 1428445671, "length_m": 96.859465919653161, "street_name": "1st Lane" }, "geometry": { "type": "LineString", "coordinates": [ [ 79.8895083, 6.9140721 ], [ 79.8893297, 6.9138582 ], [ 79.8891147, 6.9135172 ], [ 79.8889862, 6.9133751 ] ] } },
+{ "type": "Feature", "properties": { "segment": 4, "node_from": 1428445671, "node_to": 258030070, "length_m": 292.07073466165065, "street_name": "Unknown" }, "geometry": { "type": "LineString", "coordinates": [ [ 79.8889862, 6.9133751 ], [ 79.8888793, 6.9132094 ], [ 79.8888551, 6.9130949 ], [ 79.8888578, 6.912565 ], [ 79.8888929, 6.9121385 ], [ 79.8890322, 6.9118034 ], [ 79.8890643, 6.9108475 ], [ 79.8890654, 6.9108114 ] ] } },
+{ "type": "Feature", "properties": { "segment": 5, "node_from": 258030070, "node_to": 683787618, "length_m": 101.1957713861612, "street_name": [ "Cotta Road", "Dr. N. M. Perera Mawatha (Cotta Road)" ] }, "geometry": { "type": "LineString", "coordinates": [ [ 79.8890654, 6.9108114 ], [ 79.8892356, 6.9108305 ], [ 79.8894518, 6.9108612 ], [ 79.8899755, 6.9109201 ] ] } }
+]
+}
