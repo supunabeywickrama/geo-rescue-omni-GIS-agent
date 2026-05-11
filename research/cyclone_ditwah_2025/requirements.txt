@@ -1,0 +1,7 @@
+requests
+tqdm
+python-dotenv
+rasterio
+numpy
+geopandas
+shapely
