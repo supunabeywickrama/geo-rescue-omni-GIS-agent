@@ -1,17 +1,8 @@
 """
-Download products listed by 01_search_products.py using Copernicus CDSE OAuth.
+Download Sentinel-1 GRD products from Copernicus CDSE.
 
-WHY THIS APPROACH:
-  - CDSE (dataspace.copernicus.eu) provides free direct download of full products
-  - Authentication uses a short-lived Bearer token (expires in 10 min)
-  - This script auto-refreshes the token every 9 minutes
-  - Downloads are streamed in chunks so large files don't exhaust RAM
-  - Already-downloaded zips are skipped (safe to re-run after interruption)
-
-EXPECTED SIZES (after fixing search to GRD only):
-  - Sentinel-1 GRD IW: ~300-800 MB per product
-  - Sentinel-2 L2A:    ~600-1000 MB per product
-  - Total (~45 products): ~15-25 GB
+Safe to re-run after any crash — already-downloaded files are skipped.
+S2 / Sentinel-2 products are ignored even if present in the JSON.
 
 Usage:
     python 02_download_products.py
@@ -44,44 +35,48 @@ DOWNLOAD_DIR = RAW_DIR / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_token() -> str:
+def get_token(retries: int = 5) -> str:
     """
-    Fetch a Bearer token from CDSE identity server.
-
-    WHY needed:
-      The download endpoint rejects requests without a valid Bearer token.
-      Tokens expire after 10 minutes — this function is called at startup
-      and again every 9 minutes during the download loop.
+    Fetch a Bearer token from CDSE with retry + backoff.
+    Retries up to 5 times on timeout or network error.
     """
     if not CDSE_USERNAME or not CDSE_PASSWORD:
         raise EnvironmentError(
-            "Set CDSE_USERNAME and CDSE_PASSWORD in research/cyclone_ditwah_2025/.env"
+            "Set CDSE_USERNAME and CDSE_PASSWORD in .env"
         )
-    r = requests.post(TOKEN_URL, data={
-        "client_id": "cdse-public",
-        "username":   CDSE_USERNAME,
-        "password":   CDSE_PASSWORD,
-        "grant_type": "password",
-    }, timeout=20)
-    r.raise_for_status()
-    print("[auth] Token acquired (valid 10 min).")
-    return r.json()["access_token"]
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(TOKEN_URL, data={
+                "client_id":  "cdse-public",
+                "username":   CDSE_USERNAME,
+                "password":   CDSE_PASSWORD,
+                "grant_type": "password",
+            }, timeout=30)
+            r.raise_for_status()
+            print(f"[auth] Token acquired (attempt {attempt}).")
+            return r.json()["access_token"]
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError) as e:
+            wait = attempt * 15
+            print(f"[auth] Attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                print(f"[auth] Retrying in {wait}s ...")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(
+                    "Cannot reach CDSE auth server after multiple retries. "
+                    "Check your internet connection and re-run."
+                ) from e
 
 
 def download_product(product_id: str, name: str, token: str) -> Path:
     """
-    Stream-download one product zip into DOWNLOAD_DIR.
-
-    WHY streaming:
-      Products can be 300 MB – 1 GB. Streaming with iter_content writes
-      chunks to disk immediately instead of buffering the full file in RAM.
-
-    WHY skip if exists:
-      Safe to re-run after interruption — already-downloaded files are skipped.
+    Stream-download one zip. Returns path.
+    Skips if file already exists (resume-safe).
     """
     out_path = DOWNLOAD_DIR / f"{name}.zip"
     if out_path.exists():
-        print(f"  [skip] {name[:60]} already downloaded.")
+        print(f"  [skip] {name[:70]}")
         return out_path
 
     url = f"{DOWNLOAD_BASE}({product_id})/$value"
@@ -89,12 +84,12 @@ def download_product(product_id: str, name: str, token: str) -> Path:
 
     r = requests.get(url, headers=headers, stream=True, timeout=120)
     if r.status_code == 401:
-        raise PermissionError("Token expired mid-download — re-run to resume.")
+        raise PermissionError("Token rejected — will refresh and retry.")
     r.raise_for_status()
 
     total = int(r.headers.get("content-length", 0))
     with out_path.open("wb") as f, tqdm(
-        desc=name[:50], total=total, unit="B", unit_scale=True, unit_divisor=1024
+        desc=name[:55], total=total, unit="B", unit_scale=True, unit_divisor=1024
     ) as bar:
         for chunk in r.iter_content(chunk_size=65536):
             f.write(chunk)
@@ -106,44 +101,79 @@ def download_product(product_id: str, name: str, token: str) -> Path:
 
 def main():
     s1_path = RAW_DIR / "sentinel1_products.json"
-    s2_path = RAW_DIR / "sentinel2_products.json"
-
     if not s1_path.exists():
         print("Run 01_search_products.py first.")
         return
 
-    with s1_path.open() as f: s1 = json.load(f)
-    with s2_path.open() as f: s2 = json.load(f)
+    with s1_path.open() as f:
+        all_products = json.load(f)
 
-    # S1 first (most important — SAR works through cyclone clouds)
-    all_products = s1 + s2
-    total_mb = sum(p.get("ContentLength", 0) for p in all_products) / 1e6
+    # Only Sentinel-1 — skip any S2 products that snuck in from an old search
+    s1_products = [
+        p for p in all_products
+        if "S1" in p["Name"] or "SENTINEL-1" in p.get("Collection", {}).get("Name", "")
+        or p["Name"].startswith("S1")
+    ]
+    skipped_s2 = len(all_products) - len(s1_products)
 
-    print(f"\nProducts to download : {len(all_products)}")
-    print(f"  Sentinel-1 GRD     : {len(s1)}")
-    print(f"  Sentinel-2 L2A     : {len(s2)}")
-    print(f"  Estimated total    : ~{total_mb:.0f} MB")
-    print(f"\nDownloads go to     : {DOWNLOAD_DIR}")
-    print("Already-downloaded files will be skipped.\n")
+    already_done = [p for p in s1_products
+                    if (DOWNLOAD_DIR / f"{p['Name']}.zip").exists()]
+    remaining    = [p for p in s1_products
+                    if not (DOWNLOAD_DIR / f"{p['Name']}.zip").exists()]
+
+    total_mb = sum(p.get("ContentLength", 0) for p in remaining) / 1e6
+
+    print(f"\n{'='*55}")
+    print(f"  Sentinel-1 GRD products : {len(s1_products)}")
+    print(f"  Already downloaded      : {len(already_done)}")
+    print(f"  Remaining               : {len(remaining)}  (~{total_mb:.0f} MB)")
+    if skipped_s2:
+        print(f"  Skipping S2 products    : {skipped_s2}  (not needed)")
+    print(f"  Output folder           : {DOWNLOAD_DIR}")
+    print(f"{'='*55}\n")
+
+    if not remaining:
+        print("All products already downloaded.")
+        return
 
     token = get_token()
     token_time = time.time()
 
-    for i, p in enumerate(all_products, 1):
-        # Refresh token every 9 min (expires at 10 min)
+    failed = []
+    for i, p in enumerate(remaining, 1):
+        # Refresh token every 9 min
         if time.time() - token_time > 540:
             token = get_token()
             token_time = time.time()
 
         phase = p.get("_phase", "?")
         name  = p["Name"]
-        print(f"\n[{i}/{len(all_products)}] [{phase}] {name[:70]}")
+        print(f"\n[{i}/{len(remaining)}] [{phase}] {name[:70]}")
+
         try:
             download_product(p["Id"], name, token)
+        except PermissionError:
+            # Token rejected mid-download — refresh once and retry
+            print("  [retry] Refreshing token and retrying ...")
+            token = get_token()
+            token_time = time.time()
+            try:
+                download_product(p["Id"], name, token)
+            except Exception as e:
+                print(f"  ERROR after retry: {e}")
+                failed.append(name)
         except Exception as e:
-            print(f"  ERROR: {e} — continuing with next product.")
+            print(f"  ERROR: {e} — skipping, re-run to retry.")
+            failed.append(name)
 
-    print("\nAll downloads complete. Next: run 03_preprocess.py")
+    print(f"\n{'='*55}")
+    print(f"  Done.  Failed: {len(failed)}")
+    if failed:
+        print("  Failed products (re-run to retry):")
+        for n in failed:
+            print(f"    {n}")
+    print(f"{'='*55}")
+    print("\nNext: run 03_preprocess.py")
 
 
 if __name__ == "__main__":
