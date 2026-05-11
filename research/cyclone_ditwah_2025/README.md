@@ -1,60 +1,62 @@
-# Cyclone Ditwah 2025 — Flood Model Training Data
+# Cyclone Ditwah 2025 — Flood Training Data (Colombo / Kelani River)
 
-> Research folder for training a Sentinel-1 SAR flood detection model for Sri Lanka.
-> Model output (flood mask GeoJSON) feeds directly into the GeoRescue road routing pipeline.
-
----
-
-## Project Goal
-
-```
-Satellite image (Sentinel-1 SAR)
-         │
-         ▼
-  Flood detection model
-  (trained on Sen1Floods11 + Cyclone Ditwah)
-         │
-         ▼
-  Flood mask → GeoJSON polygon
-         │
-         ▼
-  flood_overlay.py  →  routing.py  →  Safe route GeoJSON
-         │
-         ▼
-  GET /gis/safe-route  →  Map UI
-```
-
-The model replaces the current Open-Meteo weather approximation with real satellite-based flood detection.
+> Sentinel-1 SAR imagery of the Colombo and Kelani River flood zone during and after
+> Cyclone Ditwah (Nov 30, 2025). Used to train the GeoRescue flood detection model.
 
 ---
 
-## Data Sources
+## What This Is
 
-### Source 1 — Sen1Floods11 (primary, already labeled)
+Cyclone Ditwah made landfall near Sri Lanka on **November 30, 2025**, causing severe
+flooding along the **Kelani River** and across **Colombo** and surrounding areas
+(Kelaniya, Kaduwela, Hanwella).
 
-**Use this first.** It already contains Sri Lanka.
+This folder collects **Sentinel-1 SAR radar images** of that specific event to train
+a flood detection model. The model output (flood polygon GeoJSON) feeds directly into
+the road routing pipeline.
 
-| Property | Value |
-|----------|-------|
-| Sri Lanka event | May 2017, Matara district floods |
-| Total dataset | 4,831 chips across 11 global flood events |
-| Tile size | 512 × 512 px, 10 m resolution |
-| S1 bands | VV + VH (Float32, dB units) — ready to use |
-| Labels | Binary flood mask: 0 = not water, 1 = flood water |
-| Total size | ~14 GB (S1 + QC layers only) |
-| Sri Lanka only | ~200 MB |
-| Download | Google Cloud Storage (public, free) |
+```
+Sentinel-1 SAR image (Colombo area)
+         │
+         ▼
+   Flood detection model (trained here)
+         │
+         ▼
+   Flood mask → GeoJSON polygon
+         │
+         ▼
+   flood_overlay.py → routing.py → Safe route
+         │
+         ▼
+   GET /gis/safe-route → Map UI
+```
 
-### Source 2 — Cyclone Ditwah 2025 (supplementary, Sri Lanka specific)
+---
 
-More recent Sri Lanka data to improve model accuracy for the current region.
-Requires manual or automatic labeling (SAR backscatter change detection).
+## Area of Interest
 
-| Phase | Dates | What it adds |
-|-------|-------|--------------|
-| Before | Nov 15–27 | No-flood baseline for Colombo/coastal Sri Lanka |
-| During | Nov 28–Dec 1 | Active cyclone flooding (SAR only — clouds block optical) |
-| After | Dec 2–10 | Peak flood extent |
+**Colombo + Kelani River basin**
+- Longitude: 79.8° – 80.4°E
+- Latitude: 6.7° – 7.3°N
+- Covers: Colombo city, Kelani River mouth to Hanwella, Kelaniya, Kaduwela
+
+---
+
+## Data — Sentinel-1 GRD
+
+| Phase | Dates | Purpose |
+|-------|-------|---------|
+| **Before** | Nov 15 – Nov 27, 2025 | Dry baseline — roads clear, no flooding |
+| **During** | Nov 28 – Dec 2, 2025 | Cyclone landfall — peak flooding |
+| **After** | Dec 3 – Dec 10, 2025 | Flood extent post-storm |
+
+**Why Sentinel-1 SAR?**
+Cyclones produce 100% cloud cover — optical satellites (Sentinel-2) see nothing.
+Sentinel-1 radar penetrates cloud and rain. Flooded areas appear dark in VV/VH bands.
+
+**Why GRD and not SLC?**
+GRD = processed amplitude image, ~300 MB per product. Ready for flood mapping.
+SLC = raw complex phase data, 7+ GB per product. Wrong type — needs interferometric processing.
 
 ---
 
@@ -63,105 +65,23 @@ Requires manual or automatic labeling (SAR backscatter change detection).
 ```
 cyclone_ditwah_2025/
 ├── scripts/
-│   ├── 00_download_sen1floods11.py  # Download primary labeled dataset
-│   ├── 01_search_products.py        # Search Copernicus for Ditwah products
-│   ├── 02_download_products.py      # Download Ditwah Sentinel-1 GRD zips
-│   ├── 03_preprocess.py             # Extract bands → GeoTIFF
-│   ├── 04_tile_dataset.py           # Cut into 256×256 tiles + manifest.csv
-│   └── 05_verify_dataset.py         # Class balance check
-├── data/
-│   ├── sen1floods11/                # Sen1Floods11 tiles + labels (gitignored)
-│   │   └── HandLabeled/
-│   │       ├── S1/   ← *_S1.tif  (VV+VH bands)
-│   │       └── QC/   ← *_QC.tif  (flood mask labels)
-│   ├── raw/                         # Ditwah raw downloads
-│   │   └── downloads/
-│   ├── processed/                   # Extracted Ditwah GeoTIFFs
-│   ├── tiles/                       # 256×256 training tiles + manifest.csv
-│   └── labels/                      # Ditwah flood masks (auto or manual)
-├── notebooks/                       # EDA and visualisation
-├── .env                             # Credentials (not committed)
+│   ├── 01_search_products.py   # Search Copernicus catalogue (no auth)
+│   ├── 02_download_products.py # Download via CDSE OAuth token
+│   ├── 03_preprocess.py        # Extract VV/VH bands → GeoTIFF
+│   ├── 04_tile_dataset.py      # Cut into 256×256 tiles + manifest.csv
+│   └── 05_verify_dataset.py    # Check class balance before training
+├── data/                       # All gitignored — never committed
+│   ├── raw/
+│   │   ├── sentinel1_products.json  # Search results
+│   │   ├── search_summary.txt
+│   │   └── downloads/               # Downloaded .zip products
+│   ├── processed/              # Extracted VV/VH GeoTIFFs
+│   ├── tiles/                  # 256×256 training tiles + manifest.csv
+│   └── labels/                 # Flood masks (auto or manual)
+├── .env                        # Credentials — never committed
 ├── requirements.txt
 └── README.md
 ```
-
----
-
-## Run Order
-
-### Phase 1 — Sen1Floods11 (do this first)
-
-```bash
-pip install -r requirements.txt
-
-# Sri Lanka chips only (~200 MB, fastest start)
-python scripts/00_download_sen1floods11.py --sri-lanka-only
-
-# Or full dataset (14 GB, all 11 global events — better model)
-python scripts/00_download_sen1floods11.py
-```
-
-Data lands in `data/sen1floods11/HandLabeled/S1/` and `.../QC/`.
-These are ready for training immediately — no preprocessing needed.
-
-### Phase 2 — Cyclone Ditwah 2025 (adds Sri Lanka 2025 context)
-
-```bash
-# Search catalogue (no auth, instant)
-python scripts/01_search_products.py
-
-# Download GRD products (~15-25 GB, ~1-1.5 hours)
-python scripts/02_download_products.py
-
-# Extract bands to GeoTIFF
-python scripts/03_preprocess.py
-
-# Cut into 256×256 tiles
-python scripts/04_tile_dataset.py
-
-# Verify class balance
-python scripts/05_verify_dataset.py
-```
-
----
-
-## Understanding the Scripts
-
-### `00_download_sen1floods11.py`
-
-Downloads pre-made, pre-labeled Sentinel-1 flood chips from a public Google Cloud Storage bucket.
-
-- `*_S1.tif` — 2-band GeoTIFF (VV, VH), already in dB, 512×512 px
-- `*_QC.tif` — binary flood mask label (-1=NoData, 0=Not Water, 1=Flood)
-- Public bucket — no credentials needed
-- `--sri-lanka-only` flag downloads only Sri Lanka chips (~200 MB) for a fast start
-
-### `01_search_products.py`
-
-Queries the Copernicus OData catalogue. No authentication needed for search.
-
-Key filters:
-- `productType = GRD` — Ground Range Detected, ~300 MB per file. **Not SLC** (7+ GB, wrong type).
-- `operationalMode = IW` — 250 km swath, covers all Sri Lanka in one pass.
-- `cloudCover < 30%` — Sentinel-2 only. During cyclone, S2 is skipped (100% cloud).
-- Max 8 S1 + 5 S2 per phase — caps total at ~25 GB.
-
-### `02_download_products.py`
-
-Downloads using CDSE Bearer token authentication. Tokens expire in 10 minutes — script auto-refreshes every 9 minutes. Files are streamed in chunks (no RAM issues). Already-downloaded files are skipped (safe to resume after crash).
-
-### `03_preprocess.py`
-
-- **S1 GRD:** Extracts VV and VH bands, converts DN → dB scale (`10 × log10(DN²)`)
-- **S2 L2A:** Extracts 10 m bands → RGB composite + NIR GeoTIFF
-
-### `04_tile_dataset.py`
-
-Slides a 256×256 window over each GeoTIFF, saves non-empty tiles, writes `manifest.csv` with phase label (before/during/after) per tile.
-
-### `05_verify_dataset.py`
-
-Checks flood vs no-flood tile ratio. Warns if imbalanced (ratio > 2× triggers weighted loss recommendation).
 
 ---
 
@@ -171,13 +91,76 @@ Checks flood vs no-flood tile ratio. Warns if imbalanced (ratio > 2× triggers w
 pip install -r requirements.txt
 ```
 
-Edit `.env`:
+Add your Copernicus Data Space credentials to `.env`:
+
 ```
 CDSE_USERNAME=your_email@example.com
 CDSE_PASSWORD=your_password
 ```
 
-Register free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu). Only needed for Cyclone Ditwah download — not for Sen1Floods11.
+Register free at **dataspace.copernicus.eu** (no payment, active immediately).
+
+---
+
+## Run Order
+
+```bash
+# 1. Search catalogue — finds Sentinel-1 GRD over Colombo/Kelani for Nov-Dec 2025
+python scripts/01_search_products.py
+
+# 2. Download products (~5-6 GB, ~20-30 min at 5 MB/s)
+python scripts/02_download_products.py
+
+# 3. Extract VV and VH bands → GeoTIFF (converts DN to dB scale)
+python scripts/03_preprocess.py
+
+# 4. Cut GeoTIFFs into 256×256 tiles, write manifest.csv
+python scripts/04_tile_dataset.py
+
+# 5. Check flood vs no-flood tile balance before training
+python scripts/05_verify_dataset.py
+```
+
+---
+
+## Script Details
+
+### `01_search_products.py`
+Queries the free Copernicus OData catalogue. No login needed.
+Filters: GRD product type, IW mode, AOI intersects Colombo/Kelani River basin.
+Saves product list and sizes to `data/raw/sentinel1_products.json`.
+
+### `02_download_products.py`
+Downloads using a CDSE Bearer token (expires every 10 min, auto-refreshed every 9 min).
+Files streamed to disk in chunks — no RAM issues. Already-downloaded files skipped on re-run.
+
+### `03_preprocess.py`
+Extracts VV and VH bands from each `.zip`, converts raw DN values to dB scale
+(`10 × log10(DN²)`). Saves as GeoTIFF. Flooded areas will appear significantly darker
+in the during/after phase compared to before.
+
+### `04_tile_dataset.py`
+Slides a 256×256 window across each GeoTIFF. Skips tiles that are >60% empty.
+Tags each tile with its phase (before / during / after).
+Writes `data/tiles/manifest.csv` with path, phase, and coordinates per tile.
+
+### `05_verify_dataset.py`
+Reads manifest.csv and prints tile counts per phase.
+Checks flood (during+after) vs no-flood (before) ratio.
+Warns if imbalanced — imbalanced datasets cause models to predict "no flood" for everything.
+
+---
+
+## Labelling
+
+Tiles need binary flood masks (0 = road clear, 1 = flooded).
+
+**Recommended — automatic SAR change detection:**
+Compare VV backscatter between before and during phases.
+Flood water causes a strong drop (typically >3 dB darker).
+Pixels below a threshold in the during-phase image = flood.
+
+**Manual:** Load VV GeoTIFF in QGIS, draw flood polygons, export as raster mask.
 
 ---
 
@@ -185,29 +168,15 @@ Register free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu). Onl
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `Token not found` on download | Missing Bearer token | Set CDSE_USERNAME + CDSE_PASSWORD in `.env` |
-| Download is 7+ GB per file | Old script grabbed SLC products | Fixed — now GRD only (~300 MB) |
-| `401 Unauthorized` mid-download | Token expired | Script auto-refreshes; re-run if it still fails |
-| S2 images are all black | Cloud cover during cyclone | Expected — S2 not searched for "during" phase |
-| `google-cloud-storage` not found | Missing package | `pip install google-cloud-storage` |
-
----
-
-## Labelling Ditwah Data
-
-Sen1Floods11 tiles are already labeled. Cyclone Ditwah tiles need labels.
-
-**Automatic method (recommended):**
-Compare VV backscatter between before and during phases. Water causes a strong drop in backscatter (typically > 3 dB). Pixels below a threshold in the during-phase image = flood.
-
-**Manual method:** Use QGIS — load the VV GeoTIFF, draw flood polygons, export as raster mask.
-
-**Reference:** [Sen1Floods11](https://github.com/cloudtostreet/Sen1Floods11) labeling methodology paper.
+| `Token not found` | Missing auth header | Set `CDSE_USERNAME` + `CDSE_PASSWORD` in `.env` |
+| Files are 7+ GB | Old script fetched SLC — now fixed | Re-run `01_search_products.py` |
+| `401 Unauthorized` mid-download | Token expired | Script auto-refreshes; re-run if still fails |
+| 0 products found | Date range has no passes | Widen date range in `01_search_products.py` |
 
 ---
 
 ## Notes
 
-- All `data/` directories are gitignored — satellite files are never committed
-- Ensure **50 GB free disk space** before downloading full Ditwah dataset
-- Sen1Floods11 is the faster path — start there, add Ditwah for Sri Lanka specificity
+- All `data/` is gitignored — satellite files are never committed to git
+- Ensure **20 GB free disk space** before downloading
+- Sentinel-1 revisit time over Sri Lanka is ~6 days — expect 2–3 passes per phase
