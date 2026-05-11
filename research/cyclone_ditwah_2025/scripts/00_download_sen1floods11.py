@@ -1,176 +1,133 @@
 """
-Download Sen1Floods11 — the primary labeled flood training dataset.
+Download Sen1Floods11 Sri Lanka chips — S1Hand (VV+VH) + LabelHand (flood mask).
 
-WHY THIS DATASET:
-  - 4,831 chips of 512×512 px Sentinel-1 GRD tiles (VV + VH, already in dB)
-  - Hand-labeled binary flood masks for every chip
-  - Covers Sri Lanka (2017 Matara flood event) + 10 other global events
-  - 14 GB total — much faster than downloading raw Sentinel products
-  - No preprocessing needed: tiles are ready for model training
+HOW IT WORKS:
+  1. Lists all Sri Lanka chip IDs from the STAC catalog (label collection)
+  2. Builds direct GCS HTTPS URLs for S1Hand and LabelHand TIF files
+  3. Downloads each file (~1.8 MB S1, ~0.5 MB label per chip)
 
-WHAT YOU GET:
-  *_S1.tif   — 2-band GeoTIFF (band 1=VV, band 2=VH), Float32, dB
-  *_QC.tif   — 1-band label mask: -1=NoData, 0=Not Water, 1=Water (Flood)
-  *_S2.tif   — 13-band Sentinel-2 optical (optional, not needed for SAR model)
+FILES:
+  *_S1Hand.tif    — 2-band Sentinel-1 GRD (band1=VV, band2=VH, Float32, dB)
+  *_LabelHand.tif — hand-labeled flood mask (0=not water, 1=flood water, -1=nodata)
 
-DOWNLOAD OPTIONS:
-  Option A (recommended): gsutil  — fast, parallel, resumable
-  Option B: Python google-cloud-storage — no gsutil install needed
+Sri Lanka has 42 labeled chips (~100 MB total) — downloads in ~2-3 minutes.
 
 Usage:
-    # Option A — install gsutil first (part of Google Cloud SDK)
-    pip install gsutil
-    python 00_download_sen1floods11.py --method gsutil
-
-    # Option B — pure Python
-    pip install google-cloud-storage
-    python 00_download_sen1floods11.py --method python
-
-    # Download Sri Lanka chips only (fastest, ~200 MB)
-    python 00_download_sen1floods11.py --sri-lanka-only
+    python 00_download_sen1floods11.py
+    python 00_download_sen1floods11.py --all-countries   # full 14 GB dataset
 """
 
 import argparse
-import subprocess
 from pathlib import Path
 
-OUT_DIR = Path(__file__).parent.parent / "data" / "sen1floods11"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+import requests
+from tqdm import tqdm
+from google.cloud import storage
 
-GCS_BUCKET = "gs://sen1floods11"
+GCS_BASE = "https://storage.googleapis.com/sen1floods11/v1.1/data/flood_events/HandLabeled"
 
-# Sen1Floods11 uses event codes. Sri Lanka 2017 = "Sri-Lanka"
-# Full list: Bolivia, Colombia, Ghana, India, Myanmar, Nigeria,
-#            Pakistan, Paraguay, Peru, Senegal, Somalia, Spain, Sri-Lanka
-SRI_LANKA_PREFIX = "Sri-Lanka"
+OUT_DIR   = Path(__file__).parent.parent / "data" / "sen1floods11" / "HandLabeled"
+S1_DIR    = OUT_DIR / "S1Hand"
+LABEL_DIR = OUT_DIR / "LabelHand"
 
 
-def download_gsutil(sri_lanka_only: bool):
+def list_chip_ids(country_prefix: str = "Sri-Lanka") -> list[str]:
     """
-    Use gsutil for fast parallel download with auto-resume on failure.
-
-    WHY gsutil:
-      rsync is resumable — if it crashes, re-running skips already-downloaded files.
-      -m flag uses parallel threads (much faster than sequential).
+    Walk the STAC catalog to find all chip IDs for a country.
+    Returns list of chip IDs like ['Sri-Lanka_101973', 'Sri-Lanka_14484', ...]
     """
-    if sri_lanka_only:
-        # Only S1 + QC tiles for Sri Lanka (~200 MB, fastest option)
-        for layer in ("S1", "QC"):
-            cmd = [
-                "gsutil", "-m", "rsync", "-r",
-                f"{GCS_BUCKET}/v1.1/data/flood_events/HandLabeled/{layer}/",
-                str(OUT_DIR / "HandLabeled" / layer),
-            ]
-            # Filter to Sri Lanka chips only
-            print(f"Downloading Sri Lanka {layer} tiles...")
-            # gsutil doesn't support filename filtering in rsync directly,
-            # so we use cp with wildcard
-            cmd = [
-                "gsutil", "-m", "cp",
-                f"{GCS_BUCKET}/v1.1/data/flood_events/HandLabeled/{layer}/{SRI_LANKA_PREFIX}*",
-                str(OUT_DIR / "HandLabeled" / layer) + "/",
-            ]
-            (OUT_DIR / "HandLabeled" / layer).mkdir(parents=True, exist_ok=True)
-            print(f"  Running: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-    else:
-        # Full dataset (~14 GB) — S1 + QC only (skip S2 to save space)
-        for layer in ("S1", "QC"):
-            dest = OUT_DIR / "HandLabeled" / layer
-            dest.mkdir(parents=True, exist_ok=True)
-            cmd = [
-                "gsutil", "-m", "rsync", "-r",
-                f"{GCS_BUCKET}/v1.1/data/flood_events/HandLabeled/{layer}/",
-                str(dest),
-            ]
-            print(f"\nDownloading full {layer} dataset...")
-            print(f"  Running: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-
-    # Also download the metadata GeoJSON
-    meta_cmd = [
-        "gsutil", "cp",
-        f"{GCS_BUCKET}/v1.1/Sen1Floods11_Metadata.geojson",
-        str(OUT_DIR / "Sen1Floods11_Metadata.geojson"),
-    ]
-    subprocess.run(meta_cmd, check=False)
-    print("\nMetadata downloaded.")
-
-
-def download_python(sri_lanka_only: bool):
-    """
-    Pure Python download using google-cloud-storage.
-    Slower than gsutil but no extra CLI install needed.
-    The bucket is public — no credentials required.
-    """
-    try:
-        from google.cloud import storage
-    except ImportError:
-        print("Run: pip install google-cloud-storage")
-        return
-
-    # Anonymous client for public bucket
     client = storage.Client.create_anonymous_client()
-    bucket = client.bucket("sen1floods11")
+    prefix = f"v1.1/catalog/sen1floods11_hand_labeled_label/{country_prefix}"
+    blobs  = client.list_blobs("sen1floods11", prefix=prefix)
+    ids = []
+    for b in blobs:
+        if b.name.endswith("_label.json"):
+            # e.g. .../Sri-Lanka_101973_label/Sri-Lanka_101973_label.json
+            chip_id = b.name.split("/")[-1].replace("_label.json", "")
+            ids.append(chip_id)
+    return sorted(ids)
 
-    layers = ["S1", "QC"]
-    for layer in layers:
-        prefix = f"v1.1/data/flood_events/HandLabeled/{layer}/"
-        blobs = list(bucket.list_blobs(prefix=prefix))
 
-        if sri_lanka_only:
-            blobs = [b for b in blobs if SRI_LANKA_PREFIX in b.name]
+def download_file(url: str, dest: Path) -> bool:
+    """Stream-download a single file. Returns True if downloaded, False if skipped."""
+    if dest.exists():
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    r = requests.get(url, stream=True, timeout=30)
+    if r.status_code != 200:
+        print(f"  SKIP (HTTP {r.status_code}): {url}")
+        return False
+    with dest.open("wb") as f:
+        for chunk in r.iter_content(chunk_size=32768):
+            f.write(chunk)
+    return True
 
-        dest_dir = OUT_DIR / "HandLabeled" / layer
-        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\nDownloading {len(blobs)} {layer} files...")
-        for i, blob in enumerate(blobs, 1):
-            filename = Path(blob.name).name
-            dest = dest_dir / filename
-            if dest.exists():
-                print(f"  [{i}/{len(blobs)}] skip {filename}")
-                continue
-            print(f"  [{i}/{len(blobs)}] {filename} ({blob.size / 1e6:.1f} MB)")
-            blob.download_to_filename(str(dest))
+def download_chips(chip_ids: list[str]):
+    """Download S1Hand + LabelHand TIFs for each chip ID."""
+    print(f"\nDownloading {len(chip_ids)} chips (S1Hand + LabelHand)...")
 
-    # Metadata
-    meta_blob = bucket.blob("v1.1/Sen1Floods11_Metadata.geojson")
-    meta_blob.download_to_filename(str(OUT_DIR / "Sen1Floods11_Metadata.geojson"))
-    print("\nMetadata downloaded.")
+    downloaded, skipped = 0, 0
+    for chip_id in tqdm(chip_ids, unit="chip"):
+        s1_url    = f"{GCS_BASE}/S1Hand/{chip_id}_S1Hand.tif"
+        label_url = f"{GCS_BASE}/LabelHand/{chip_id}_LabelHand.tif"
+
+        s1_ok    = download_file(s1_url,    S1_DIR    / f"{chip_id}_S1Hand.tif")
+        label_ok = download_file(label_url, LABEL_DIR / f"{chip_id}_LabelHand.tif")
+
+        if s1_ok or label_ok:
+            downloaded += 1
+        else:
+            skipped += 1
+
+    return downloaded, skipped
 
 
 def print_summary():
-    s1_files = list((OUT_DIR / "HandLabeled" / "S1").glob("*.tif"))
-    qc_files = list((OUT_DIR / "HandLabeled" / "QC").glob("*.tif"))
-    sri_lanka = [f for f in s1_files if SRI_LANKA_PREFIX in f.name]
+    s1_files    = list(S1_DIR.glob("*.tif"))    if S1_DIR.exists()    else []
+    label_files = list(LABEL_DIR.glob("*.tif")) if LABEL_DIR.exists() else []
+    s1_mb    = sum(f.stat().st_size for f in s1_files)    / 1e6
+    label_mb = sum(f.stat().st_size for f in label_files) / 1e6
+
+    sri_lanka_s1 = [f for f in s1_files if "Sri-Lanka" in f.name]
 
     print(f"\n{'='*50}")
-    print(f"  Sen1Floods11 Download Summary")
+    print(f"  Sen1Floods11 Download Complete")
     print(f"{'='*50}")
-    print(f"  S1 tiles downloaded : {len(s1_files)}")
-    print(f"  QC masks downloaded : {len(qc_files)}")
-    print(f"  Sri Lanka chips     : {len(sri_lanka)}")
-    print(f"  Location            : {OUT_DIR}")
-    print(f"\n  Next: run 04_tile_dataset.py or go straight to training.")
+    print(f"  S1Hand tiles    : {len(s1_files)}  ({s1_mb:.0f} MB)")
+    print(f"  LabelHand masks : {len(label_files)}  ({label_mb:.0f} MB)")
+    print(f"  Sri Lanka chips : {len(sri_lanka_s1)}")
+    print(f"  Saved to        : {OUT_DIR}")
+    print(f"\n  S1Hand:    band1=VV, band2=VH (Float32, dB)")
+    print(f"  LabelHand: 0=not water, 1=flood, -1=no data")
+    print(f"\n  Ready for model training!")
     print(f"{'='*50}\n")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", choices=["gsutil", "python"], default="python")
-    parser.add_argument("--sri-lanka-only", action="store_true",
-                        help="Download only Sri Lanka chips (~200 MB instead of 14 GB)")
+    parser.add_argument("--all-countries", action="store_true",
+                        help="Download all countries (~14 GB). Default: Sri Lanka only (~100 MB).")
     args = parser.parse_args()
 
-    print(f"Downloading Sen1Floods11 {'(Sri Lanka only)' if args.sri_lanka_only else '(full dataset)'}")
-    print(f"Output directory: {OUT_DIR}\n")
-
-    if args.method == "gsutil":
-        download_gsutil(args.sri_lanka_only)
+    if args.all_countries:
+        countries = [
+            "Bolivia", "Colombia", "Ghana", "India", "Myanmar",
+            "Nigeria", "Pakistan", "Paraguay", "Peru", "Senegal",
+            "Somalia", "Spain", "Sri-Lanka"
+        ]
     else:
-        download_python(args.sri_lanka_only)
+        countries = ["Sri-Lanka"]
 
+    all_chips = []
+    for country in countries:
+        chips = list_chip_ids(country)
+        print(f"  {country}: {len(chips)} chips")
+        all_chips.extend(chips)
+
+    print(f"\nTotal chips: {len(all_chips)}")
+    downloaded, skipped = download_chips(all_chips)
+    print(f"Downloaded: {downloaded}  |  Skipped (already exist): {skipped}")
     print_summary()
 
 
