@@ -35,10 +35,10 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_PATH = MODEL_DIR / "flood_unet.pth"
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
-BATCH_SIZE  = 16
-EPOCHS      = 30
-LR          = 1e-4
-MAX_TILES   = 20000   # cap for faster iteration; set None to use all
+BATCH_SIZE  = 32
+EPOCHS      = 75
+LR          = 3e-4
+MAX_TILES   = 50000   # cap for faster iteration; set None to use all
 TRAIN_SPLIT = 0.85
 SEED        = 42
 
