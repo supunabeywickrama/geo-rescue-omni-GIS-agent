@@ -97,6 +97,9 @@ cyclone_ditwah_2025/
 
 ---
 
+<img width="1912" height="965" alt="Screenshot 2026-05-16 112048" src="https://github.com/user-attachments/assets/c0c0a5a4-32c5-4625-a7f9-dedfd44de95c" />
+
+---
 ## Model Training
 
 ### Architecture
